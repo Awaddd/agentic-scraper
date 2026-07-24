@@ -1,0 +1,7 @@
+.env
+dist/
+node_modules/
+videos/
+tmp/
+results/
+.DS_Store

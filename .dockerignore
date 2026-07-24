@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+dist/
+node_modules/
+videos/
+tmp/
+specs/
+zDocs/
+*.service
+.git/

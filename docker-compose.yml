@@ -1,0 +1,36 @@
+services:
+  camofox-browser:
+    build:
+      context: ../camofox-browser
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - scraper_net
+
+  scraper:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      CAMOFOX_URL: http://camofox-browser:9377
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-https://ollama.com/v1}
+      VIDEO_SECRET: ${VIDEO_SECRET}
+      SCRAPER_WEBHOOK_SECRET: ${SCRAPER_WEBHOOK_SECRET:-}
+      PORT: "3000"
+    volumes:
+      - videos:/app/videos
+      - type: tmpfs
+        target: /app/tmp
+    networks:
+      - scraper_net
+    depends_on:
+      - camofox-browser
+
+networks:
+  scraper_net:
+    driver: bridge
+
+volumes:
+  videos:
