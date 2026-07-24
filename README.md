@@ -99,3 +99,7 @@ Use this project only with websites and data you are authorised to access, and r
 ## Status
 
 This is a curated public extract of an actively used private project. It is useful as a reference implementation and is still evolving; issues and feedback are welcome.
+
+## License
+
+[MIT](LICENSE)

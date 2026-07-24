@@ -2,6 +2,7 @@
   "name": "agentic-scraper",
   "version": "0.1.0",
   "description": "An LLM-driven browser agent for structured job-listing extraction.",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "tsc",
