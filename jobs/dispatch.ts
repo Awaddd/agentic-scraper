@@ -1,0 +1,8 @@
+import type { AgentJob, AgentResult, TaskBuilder } from "./contracts.js";
+import { buildWebhookPayload } from "../callbacks/webhook.js";
+
+export interface DispatchDependencies { tasks: Record<string, TaskBuilder>; runAgent(job: AgentJob, task: ReturnType<TaskBuilder>): Promise<AgentResult>; deliver(url: string, payload: unknown): Promise<void>; logger: { error(bindings: object, message: string): void }; }
+export async function dispatchJob(job: AgentJob, deps: DispatchDependencies): Promise<void> {
+  try { if (!Object.hasOwn(deps.tasks, job.type)) throw new Error(`Unknown task type: ${job.type}`); const result = await deps.runAgent(job, deps.tasks[job.type]!(job)); const payload = buildWebhookPayload({ jobId: job.jobId, type: job.type, ok: true, result: result.result, tokens: result.tokens, steps: result.steps, durationMs: result.durationMs, videoUrl: result.videoUrl, metadata: job.metadata }); try { await deps.deliver(job.webhookUrl, payload); } catch (error) { deps.logger.error({ jobId: job.jobId, error }, "callback delivery failed"); } }
+  catch (error) { const message = error instanceof Error ? error.message : String(error); deps.logger.error({ jobId: job.jobId, error: message }, "job failed"); const payload = buildWebhookPayload({ jobId: job.jobId, type: job.type, ok: false, result: null, tokens: { prompt: 0, completion: 0, total: 0 }, steps: 0, durationMs: 0, error: message, metadata: job.metadata }); try { await deps.deliver(job.webhookUrl, payload); } catch (deliveryError) { deps.logger.error({ jobId: job.jobId, error: deliveryError }, "callback delivery failed"); } }
+}

@@ -11,7 +11,7 @@ Recorded browser sessions need temporary access without adding a user-account da
 When a job recording exists, generate an HMAC-SHA256 signature over `filename + ":" + expiryTimestamp` using `VIDEO_SECRET`. The service returns:
 
 ```text
-GET /videos/:filename?token=<hex>&expiry=<unix-seconds>
+GET /videos/:filename?token=<hex>&expiry=<unix-milliseconds>
 ```
 
 The server validates the filename, expiry, and signature with `crypto.timingSafeEqual` before streaming the MP4.
