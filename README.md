@@ -1,8 +1,8 @@
 # agentic-scraper
 
-An LLM-driven browser agent for extracting structured job listings from authorised public websites.
+An agentic structured web-research and data-extraction service for authorised public websites.
 
-Give the service a starting URL, a natural-language goal, and a webhook callback. It drives a real Firefox browser through accessibility snapshots, returns normalised listing data asynchronously, and can record the browser session for review.
+Give the service a starting URL, a natural-language goal, and a webhook callback. It researches pages through browser accessibility snapshots, returns structured data asynchronously, and can record the browser session for review.
 
 ## What it does
 
@@ -12,7 +12,7 @@ Give the service a starting URL, a natural-language goal, and a webhook callback
 4. Posts normalised job listings to the supplied webhook URL.
 5. Optionally turns per-step screenshots into a signed MP4 recording.
 
-The current public task is deliberately narrow: job-listing extraction. The agent filters ads, sponsored placements, tracking URLs, and incomplete listing data before returning results.
+The current public task is deliberately narrow: job-listing extraction. Its task-specific filtering of ads, sponsored placements, tracking URLs, and incomplete listing data is documented in the architecture and task modules for contributors.
 
 ## Architecture
 
