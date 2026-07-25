@@ -10,7 +10,7 @@ Give the service a starting URL, a natural-language goal, and a webhook callback
 2. Opens a browser tab and gives the LLM an accessibility snapshot of the page.
 3. Repeats a bounded click, type, scroll, or navigate loop until the agent completes.
 4. Posts normalised job listings to the supplied webhook URL.
-5. Optionally turns per-step screenshots into a signed MP4 recording.
+5. Can optionally turn per-step screenshots into a signed MP4 recording.
 
 The current public task is deliberately narrow: job-listing extraction. Its task-specific filtering of ads, sponsored placements, tracking URLs, and incomplete listing data is documented in the architecture and task modules for contributors.
 
@@ -46,7 +46,6 @@ Projects/
 cp .env.example .env
 npm install
 npm run build
-npm start
 ```
 
 Required environment variables:
@@ -65,6 +64,69 @@ MAX_STEPS=12
 SCRAPER_WEBHOOK_SECRET=
 PORT=3000
 ```
+
+Start Camoufox in another terminal. Set `CAMOUFOX_HEADLESS=false` when you want to watch the browser work:
+
+```bash
+cd ../camofox-browser
+CAMOUFOX_HEADLESS=false npm start
+```
+
+Start the scraper:
+
+```bash
+npm start
+```
+
+Confirm that the browser service is connected:
+
+```bash
+curl http://localhost:3000/health
+```
+
+For a local end-to-end test, start the included callback receiver in a separate terminal:
+
+```bash
+node webhook-listener.mjs
+```
+
+Then dispatch a job:
+
+```bash
+curl -X POST http://localhost:3000/scrape/jobs \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "url": "https://weworkremotely.com",
+    "goal": "Find remote software-engineering roles. Return only real job listings with a title, company, and direct job URL.",
+    "webhookUrl": "http://localhost:4000",
+    "model": "glm-5.2"
+  }'
+```
+
+The request is asynchronous and immediately returns a job ID:
+
+```json
+{ "jobId": "a3d4f6bc-0000-4000-8000-000000000000" }
+```
+
+The callback receiver then prints the completed result. A representative result looks like:
+
+```json
+[
+  {
+    "title": "Senior Infrastructure Software Engineer",
+    "company": "Dropbox",
+    "url": "https://weworkremotely.com/remote-jobs/dropbox-senior-infrastructure-software-engineer"
+  },
+  {
+    "title": "Senior Software Engineer, Identity",
+    "company": "Twilio",
+    "url": "https://weworkremotely.com/remote-jobs/twilio-senior-software-engineer-identity"
+  }
+]
+```
+
+Add `"record": true` to the request only when an MP4 browser-session recording is useful. Recording is disabled by default.
 
 Run the test suite with:
 
