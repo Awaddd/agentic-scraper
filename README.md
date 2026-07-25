@@ -42,10 +42,9 @@ Projects/
   agentic-scraper/
 ```
 
-From the `agentic-scraper` directory, bootstrap the browser checkout once:
+From the `agentic-scraper` directory, bootstrap the pinned browser checkout once:
 
 ```bash
-git clone https://github.com/jo-inc/camofox-browser.git ../camofox-browser
 ./scripts/install-camofox-browser.sh
 ```
 
@@ -62,6 +61,7 @@ Required environment variables:
 ```env
 OLLAMA_API_KEY=
 VIDEO_SECRET=
+SCRAPER_API_KEY=
 ```
 
 Optional configuration:
@@ -71,6 +71,11 @@ OLLAMA_BASE_URL=https://ollama.com/v1
 CAMOFOX_URL=http://localhost:9377
 MAX_STEPS=12
 SCRAPER_WEBHOOK_SECRET=
+SCRAPER_ALLOW_INSECURE_LOCAL=false
+SCRAPER_HOST=127.0.0.1
+MODEL_TIMEOUT_MS=30000
+CAMOFOX_TIMEOUT_MS=20000
+WEBHOOK_TIMEOUT_MS=10000
 PORT=3000
 ```
 
@@ -100,9 +105,12 @@ node webhook-listener.mjs
 
 Then dispatch a job:
 
+For this loopback callback example only, set `SCRAPER_ALLOW_INSECURE_LOCAL=true` and keep `SCRAPER_HOST=127.0.0.1`; production remains public-only.
+
 ```bash
 curl -X POST http://localhost:3000/scrape/jobs \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer replace-with-your-scraper-api-key' \
   --data '{
     "url": "https://weworkremotely.com",
     "goal": "Find exactly two remote product-design roles. Return only real job listings with a title, company, and direct job URL.",
@@ -144,10 +152,10 @@ npm test
 
 ## Docker
 
-The included Compose file starts the scraper and Camoufox browser service. Build it from this repository with its sibling `camofox-browser` checkout available:
+The included Compose file starts the scraper and its pinned Camoufox browser service. Use the wrapper so the sibling is a clean detached checkout, the patch set is validated before application, and the browser artifacts use an explicit architecture:
 
 ```bash
-docker compose build
+./scripts/build-compose.sh x86_64 # or aarch64
 docker compose up -d
 ```
 
@@ -159,10 +167,11 @@ See the [API guide](docs/agent-guide.md) for request and webhook examples.
 
 ## Security and responsible use
 
-- Credentials supplied to a job are held in memory only and are not written to disk or logs.
-- Webhook payloads can be HMAC-signed with `SCRAPER_WEBHOOK_SECRET`.
+- `POST /scrape/:type` requires `Authorization: Bearer <SCRAPER_API_KEY>`; `/health` remains public and signed video URLs remain token-protected.
+- Starting URLs, browser navigation, webhook delivery, and projected listing URLs use a DNS-aware public-outbound policy. `SCRAPER_ALLOW_INSECURE_LOCAL=true` is an explicit loopback-only development exception and requires a loopback `SCRAPER_HOST`.
+- Webhook payloads can be HMAC-signed with `SCRAPER_WEBHOOK_SECRET` over `<timestamp>.<rawBody>`.
 - Recorded video URLs use expiring HMAC tokens.
-- The service validates webhook schemes and video filenames before use.
+- Production deployments must enforce network egress filtering as defence in depth. The application-level policy is not a replacement for network controls.
 
 Use this project only with websites and data you are authorised to access, and respect each site's terms and applicable law.
 

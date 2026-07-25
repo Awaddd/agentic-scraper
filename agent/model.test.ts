@@ -34,4 +34,24 @@ describe("model transport", () => {
 			response_format: { type: "json_object" },
 		});
 	});
+	it("does not extend the model deadline for its malformed-JSON retry", async () => {
+		const fetcher = vi.fn().mockResolvedValue(new Response("{"));
+		let clock = 0;
+		const model = createModel(
+			"https://ollama.test/v1",
+			"key",
+			fetcher,
+			undefined,
+			30,
+			() => {
+				const value = clock;
+				clock = 30;
+				return value;
+			},
+		);
+		await expect(
+			model.complete([{ role: "system", content: "s" }], "glm"),
+		).rejects.toBeInstanceOf(SyntaxError);
+		expect(fetcher).toHaveBeenCalledOnce();
+	});
 });

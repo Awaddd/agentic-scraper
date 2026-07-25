@@ -14,7 +14,6 @@ const job = {
 	url: "https://x.test",
 	goal: "find",
 	webhookUrl: "https://hook.test",
-	credentials: { cookie: "private-cookie" },
 	metadata: { private: "metadata" },
 };
 function tabs(): Tabs {
@@ -62,9 +61,6 @@ describe("agent loop", () => {
 		expect(transport.close).toHaveBeenCalled();
 		const second = model.complete.mock.calls[1]?.[0];
 		expect(second[1].content).toBe("[step 1 snapshot — compressed]");
-		expect(JSON.stringify(model.complete.mock.calls)).not.toContain(
-			"private-cookie",
-		);
 		expect(JSON.stringify(model.complete.mock.calls)).not.toContain("metadata");
 	});
 	it("waits 1.5 seconds after an action before recording a frame", async () => {
@@ -143,10 +139,13 @@ describe("agent loop", () => {
 					wakeBrowser: vi.fn(),
 				},
 			),
-		).rejects.toThrow("broken");
+		).resolves.toMatchObject({
+			ok: false,
+			error: "browser or model operation failed",
+		});
 		expect(transport.close).toHaveBeenCalled();
 	});
-	it("logs invalid action schemas and preserves bounded completion behaviour", async () => {
+	it("returns a safe failure for invalid action schemas", async () => {
 		const logger = { warn: vi.fn() };
 		const result = await runAgent(
 			job,
@@ -168,13 +167,13 @@ describe("agent loop", () => {
 		);
 
 		expect(result).toMatchObject({
-			ok: true,
+			ok: false,
 			result: null,
 			steps: 1,
 			tokens: { prompt: 1, completion: 2, total: 3 },
 		});
 		expect(logger.warn).toHaveBeenCalledWith(
-			{ jobId: "run-test", issues: expect.any(Array) },
+			{ jobId: "run-test", issueCount: expect.any(Number) },
 			"action failed schema validation",
 		);
 	});
@@ -205,8 +204,61 @@ describe("agent loop", () => {
 		expect(result).toMatchObject({ ok: true, result: [{ title: "result" }] });
 		expect(transport.close).toHaveBeenCalled();
 		expect(logger.warn).toHaveBeenCalledWith(
-			{ jobId: "run-test", error: "results unavailable" },
+			{ jobId: "run-test", error: "browser or model operation failed" },
 			"failed to write result artifact",
 		);
+	});
+	it("recovers from one action failure after a later snapshot and fails on step exhaustion", async () => {
+		const transport = tabs();
+		(transport.click as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error("stale ref"),
+		);
+		const recovered = await runAgent(
+			job,
+			{ systemPrompt: "s", processResult: () => [] },
+			{
+				model: {
+					complete: vi
+						.fn()
+						.mockResolvedValueOnce({
+							content: '{"action":"click","ref":"e1"}',
+							usage: { prompt_tokens: 0, completion_tokens: 0 },
+						})
+						.mockResolvedValueOnce({
+							content: '{"action":"done"}',
+							usage: { prompt_tokens: 0, completion_tokens: 0 },
+						}),
+				},
+				createTabs: () => transport,
+				camofoxUrl: "http://c",
+				maxSteps: 2,
+				videoSecret: "s",
+				wakeBrowser: vi.fn(),
+			},
+		);
+		expect(recovered.ok).toBe(true);
+		expect(transport.close).toHaveBeenCalledOnce();
+
+		const exhausted = await runAgent(
+			job,
+			{ systemPrompt: "s", processResult: () => [] },
+			{
+				model: {
+					complete: vi.fn().mockResolvedValue({
+						content: '{"action":"scroll"}',
+						usage: { prompt_tokens: 0, completion_tokens: 0 },
+					}),
+				},
+				createTabs: tabs,
+				camofoxUrl: "http://c",
+				maxSteps: 1,
+				videoSecret: "s",
+				wakeBrowser: vi.fn(),
+			},
+		);
+		expect(exhausted).toMatchObject({
+			ok: false,
+			error: "agent step limit exhausted",
+		});
 	});
 });

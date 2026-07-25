@@ -14,5 +14,10 @@ fi
 export CAMOUFOX_EXECUTABLE
 CAMOUFOX_EXECUTABLE="$(<"$EXECUTABLE_FILE")"
 export CAMOUFOX_HEADLESS="${CAMOUFOX_HEADLESS:-true}"
+if [[ "${SCRAPER_ALLOW_INSECURE_LOCAL:-false}" == "true" ]]; then
+	export CAMOFOX_OUTBOUND_POLICY="loopback"
+else
+	export CAMOFOX_OUTBOUND_POLICY="public"
+fi
 
 exec npm --prefix "$BROWSER_DIR" start

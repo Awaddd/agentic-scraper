@@ -9,9 +9,10 @@ readonly STATE_DIR="$SCRAPER_DIR/.camofox"
 readonly EXECUTABLE_FILE="$STATE_DIR/executable"
 
 if [[ ! -d "$BROWSER_DIR/.git" ]]; then
-  echo "Expected a camofox-browser checkout at: $BROWSER_DIR" >&2
-  exit 1
+	"$SCRIPT_DIR/bootstrap-camofox-browser.sh" "$BROWSER_DIR"
 fi
+
+"$SCRIPT_DIR/bootstrap-camofox-browser.sh" "$BROWSER_DIR"
 
 case "$(uname -s)" in
   Darwin) platform="mac" ;;
@@ -43,16 +44,29 @@ done
 npm --prefix "$BROWSER_DIR" install --ignore-scripts
 
 bundle_dir="$STATE_DIR/camoufox-$CAMOUFOX_VERSION-$platform.$architecture"
-archive="$bundle_dir.zip"
 asset="camoufox-$CAMOUFOX_VERSION-$platform.$architecture.zip"
 url="https://github.com/daijro/camoufox/releases/download/v$CAMOUFOX_VERSION/$asset"
 
+mkdir -p "$STATE_DIR"
+find "$STATE_DIR" -mindepth 1 -maxdepth 1 -type d -name '.staging-*' -exec rm -rf {} +
+
 if [[ ! -d "$bundle_dir" ]]; then
-  mkdir -p "$STATE_DIR"
-  mkdir -p "$bundle_dir"
-  curl --fail --location --silent --show-error "$url" --output "$archive"
-  unzip -q "$archive" -d "$bundle_dir"
-  rm "$archive"
+	staging_dir="$(mktemp -d "$STATE_DIR/.staging-XXXXXX")"
+	archive="$staging_dir/$asset"
+	trap 'rm -rf "$staging_dir"' EXIT
+	curl --fail --location --silent --show-error "$url" --output "$archive"
+	unzip -q "$archive" -d "$staging_dir/extract"
+	if [[ "$platform" == "mac" ]]; then
+		executable="$(find "$staging_dir/extract" -path '*/Camoufox.app/Contents/MacOS/camoufox' -type f -print -quit)"
+	else
+		executable="$(find "$staging_dir/extract" -name camoufox-bin -type f -print -quit)"
+	fi
+	if [[ -z "$executable" ]]; then
+		echo "Could not find the Camoufox executable in downloaded archive." >&2
+		exit 1
+	fi
+	mv "$staging_dir/extract" "$bundle_dir"
+	trap - EXIT
 fi
 
 if [[ "$platform" == "mac" ]]; then

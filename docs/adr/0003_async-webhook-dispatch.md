@@ -12,7 +12,7 @@ Browser-agent runs can take seconds or minutes. Holding an HTTP request open tie
 2. The browser loop runs in the background.
 3. The service posts the final success or failure payload to the request's `webhookUrl`.
 
-The callback URL must be HTTP or HTTPS. Credentials supplied in a job are held in memory only for that run.
+The callback URL must be HTTP or HTTPS and pass the public outbound URL policy.
 
 ## Consequences
 

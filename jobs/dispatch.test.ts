@@ -16,6 +16,7 @@ describe("dispatch", () => {
 		await dispatchJob(job, {
 			tasks: { jobs: buildJobsConfig },
 			runAgent: vi.fn().mockResolvedValue({
+				ok: true,
 				result: [],
 				tokens: { prompt: 0, completion: 0, total: 0 },
 				steps: 1,
@@ -30,5 +31,28 @@ describe("dispatch", () => {
 			expect.anything(),
 			"callback delivery failed",
 		);
+	});
+	it("derives a single failure callback from an AgentResult failure", async () => {
+		const deliver = vi.fn().mockResolvedValue(undefined);
+		await dispatchJob(job, {
+			tasks: { jobs: buildJobsConfig },
+			runAgent: vi.fn().mockResolvedValue({
+				ok: false,
+				result: null,
+				error: "operation timed out",
+				tokens: { prompt: 1, completion: 2, total: 3 },
+				steps: 2,
+				durationMs: 4,
+			}),
+			deliver,
+			logger: { error: vi.fn() },
+		});
+		expect(deliver).toHaveBeenCalledOnce();
+		expect(deliver.mock.calls[0]?.[1]).toMatchObject({
+			ok: false,
+			result: null,
+			error: "operation timed out",
+			tokens: { total: 3 },
+		});
 	});
 });

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { fetchWithTimeout } from "../lib/abortable-fetch.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -29,10 +30,15 @@ export async function captureScreenshot(
 	step: number,
 	camofoxUrl: string,
 	fetcher: typeof fetch = fetch,
+	timeoutMs = 20_000,
 ): Promise<void> {
 	await mkdir(runDir, { recursive: true });
-	const res = await fetcher(
+	const res = await fetchWithTimeout(
+		fetcher,
 		`${camofoxUrl}/tabs/${tabId}/screenshot?userId=${userId}`,
+		{},
+		timeoutMs,
+		"recording screenshot",
 	);
 	if (!res.ok) throw new Error(`screenshot failed: ${res.status}`);
 	await writeFile(

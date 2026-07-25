@@ -76,12 +76,13 @@ export async function dispatchJob(
 		const payload = buildWebhookPayload({
 			jobId: job.jobId,
 			type: job.type,
-			ok: true,
+			ok: result.ok,
 			result: result.result,
 			tokens: result.tokens,
 			steps: result.steps,
 			durationMs: result.durationMs,
-			videoUrl: result.videoUrl,
+			videoUrl: result.ok ? result.videoUrl : undefined,
+			error: result.ok ? undefined : result.error,
 			metadata: job.metadata,
 		});
 

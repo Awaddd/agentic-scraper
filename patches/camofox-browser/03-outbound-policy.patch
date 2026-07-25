@@ -1,0 +1,127 @@
+diff --git a/lib/outbound-policy.js b/lib/outbound-policy.js
+new file mode 100644
+index 0000000..589e1e6
+--- /dev/null
++++ b/lib/outbound-policy.js
+@@ -0,0 +1,71 @@
++import { lookup } from 'node:dns/promises';
++import { isIP } from 'node:net';
++
++function ipv4Parts(address) {
++  const parts = address.split('.').map(Number);
++  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
++    ? parts : null;
++}
++
++function isLoopback(address) {
++  const value = address.toLowerCase();
++  if (value === '::1') return true;
++  if (value.startsWith('::ffff:')) return isLoopback(value.slice(7));
++  return ipv4Parts(value)?.[0] === 127;
++}
++
++function isPublic(address) {
++  const value = address.toLowerCase();
++  if (isIP(value) === 6) {
++    if (value.startsWith('::ffff:')) return isPublic(value.slice(7));
++    if (value === '::' || value === '::1' || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb') || value.startsWith('ff') || value.startsWith('2001:db8:')) return false;
++    return value.startsWith('2') || value.startsWith('3');
++  }
++  const parts = ipv4Parts(value);
++  if (!parts) return false;
++  const [a, b, c] = parts;
++  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
++  if (a === 100 && b >= 64 && b <= 127) return false;
++  if (a === 169 && b === 254) return false;
++  if (a === 172 && b >= 16 && b <= 31) return false;
++  if (a === 192 && (b === 0 || b === 168)) return false;
++  if (a === 198 && (b === 18 || b === 19 || b === 51)) return false;
++  if (a === 203 && b === 0 && c === 113) return false;
++  return true;
++}
++
++export function outboundPolicyMode(value) {
++  if (value === 'public' || value === 'loopback') return value;
++  throw new Error('CAMOFOX_OUTBOUND_POLICY must be public or loopback');
++}
++
++export async function outboundUrlAllowed(rawUrl, mode) {
++  let url;
++  try {
++    url = new URL(rawUrl);
++  } catch {
++    return false;
++  }
++  if (url.protocol !== 'http:' && url.protocol !== 'https:') return true;
++  if (url.username || url.password) return false;
++  const hostname = url.hostname.replace(/^\[|\]$/g, '');
++  let addresses;
++  try {
++    addresses = isIP(hostname) ? [hostname] : (await lookup(hostname, { all: true, verbatim: true })).map((answer) => answer.address);
++  } catch {
++    return false;
++  }
++  return addresses.length > 0 && addresses.every((address) => isPublic(address) || (mode === 'loopback' && isLoopback(address)));
++}
++
++export async function installOutboundPolicy(context, mode, log) {
++  await context.route('**/*', async (route) => {
++    const request = route.request();
++    const url = request.url();
++    if (await outboundUrlAllowed(url, mode)) return route.continue();
++    let host = 'unknown';
++    try { host = new URL(url).hostname; } catch {}
++    log('warn', 'blocked outbound browser request', { host, resourceType: request.resourceType() });
++    return route.abort('blockedbyclient');
++  });
++}
+diff --git a/server.js b/server.js
+index 810bbdb..917ee14 100644
+--- a/server.js
++++ b/server.js
+@@ -34,11 +34,13 @@ import { actionFromReq, classifyError } from './lib/request-utils.js';
+ import { cleanupOrphanedTempFiles, cleanupStaleFirefoxProfiles } from './lib/tmp-cleanup.js';
+ import { coalesceInflight } from './lib/inflight.js';
+ import { createReporter, createTabHealthTracker, collectResourceSnapshot, classifyProxyError, browserProcessTreeRssMb } from './lib/reporter.js';
++import { installOutboundPolicy, outboundPolicyMode } from './lib/outbound-policy.js';
+ import { mountDocs } from './lib/openapi.js';
+ import { initSentry, captureException as sentryCaptureException, setupExpressErrorHandler as setupSentryErrorHandler, flush as sentryFlush } from './lib/sentry.js';
+ import { prepareExternalCamoufoxExecutable } from './lib/camoufox-executable.js';
+ 
+ const CONFIG = loadConfig();
++const OUTBOUND_POLICY_MODE = outboundPolicyMode(process.env.CAMOFOX_OUTBOUND_POLICY);
+ 
+ // --- Crash reporter (opt-in, anonymized GitHub issues) ---
+ import { readFileSync } from 'fs';
+@@ -710,6 +712,7 @@ async function probeGoogleSearch(candidateBrowser) {
+       viewport: { width: 1280, height: 720 },
+       permissions: ['geolocation'],
+     });
++    await installOutboundPolicy(context, OUTBOUND_POLICY_MODE, log);
+     const page = await context.newPage();
+     await page.goto('https://www.google.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+     await page.waitForTimeout(1200);
+@@ -1199,6 +1202,7 @@ async function getSession(userId, { trace = false } = {}) {
+       }
+       await pluginEvents.emitAsync('session:creating', { userId: key, contextOptions });
+       const context = await b.newContext(contextOptions);
++      await installOutboundPolicy(context, OUTBOUND_POLICY_MODE, log);
+ 
+       let tracePath = null;
+       if (trace) {
+diff --git a/Dockerfile b/Dockerfile
+index adb6a76..1c957ac 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -57,9 +57,9 @@ RUN --mount=type=bind,source=dist,target=/dist \
+ 
+ WORKDIR /app
+ 
+-COPY package.json ./
++COPY package.json package-lock.json ./
+ COPY scripts/ ./scripts/
+-RUN npm install --production
++RUN npm ci --omit=dev
+ 
+ COPY server.js ./
+ COPY camofox.config.json ./

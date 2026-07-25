@@ -1,3 +1,4 @@
+import type { OutboundUrlPolicyOptions } from "../outbound-url-policy.js";
 import type { AgentJob, TaskConfig } from "./contracts.js";
 import { normalizeUrl } from "./normalize-url.js";
 
@@ -23,19 +24,30 @@ Rules:
 - Output exactly one JSON object and nothing else.
 - When extracting listings, only include real job postings. Skip anything that is an ad, sponsored placement, or has a URL containing "/listing_ads/", tracking tokens, or redirect parameters. A real listing has a specific job title, a real company name, and a direct URL to the job post.`;
 
-export function buildJobsConfig(job: AgentJob): TaskConfig {
+export function buildJobsConfig(
+	job: AgentJob,
+	policy?: OutboundUrlPolicyOptions,
+): TaskConfig {
 	return {
 		systemPrompt: JOBS_SYSTEM,
-		processResult(act) {
+		async processResult(act) {
 			const origin = new URL(job.url).origin;
 			const raw = Array.isArray(act.listings) ? act.listings : [];
-			return (
-				raw as Array<{ title?: string; company?: string; url?: string }>
-			).map((l) => ({
-				title: l.title ?? "",
-				company: l.company ?? "",
-				url: normalizeUrl(l.url ?? "", origin),
-			}));
+			const listings = await Promise.all(
+				(raw as Array<{ title?: string; company?: string; url?: string }>).map(
+					async (listing) => {
+						const url = await normalizeUrl(listing.url ?? "", origin, policy);
+						return url
+							? {
+									title: listing.title ?? "",
+									company: listing.company ?? "",
+									url,
+								}
+							: undefined;
+					},
+				),
+			);
+			return listings.filter((listing) => listing !== undefined);
 		},
 	};
 }

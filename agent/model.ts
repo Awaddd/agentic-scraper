@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from "../lib/abortable-fetch.js";
+
 export interface Message {
 	role: "system" | "user" | "assistant";
 	content: string;
@@ -21,23 +23,35 @@ export function createModel(
 	apiKey: string | undefined,
 	fetcher: typeof fetch = fetch,
 	logger?: DiagnosticLogger,
+	timeoutMs = 30_000,
+	now: () => number = Date.now,
 ): Model {
-	const once = async (messages: Message[], model: string) => {
-		const res = await fetcher(`${baseUrl}/chat/completions`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-				Connection: "close",
+	const once = async (
+		messages: Message[],
+		model: string,
+		remaining: number,
+	) => {
+		const res = await fetchWithTimeout(
+			fetcher,
+			`${baseUrl}/chat/completions`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+					Connection: "close",
+				},
+				body: JSON.stringify({
+					model,
+					messages,
+					temperature: 0,
+					stream: false,
+					response_format: { type: "json_object" },
+				}),
 			},
-			body: JSON.stringify({
-				model,
-				messages,
-				temperature: 0,
-				stream: false,
-				response_format: { type: "json_object" },
-			}),
-		});
+			remaining,
+			"model request",
+		);
 		if (!res.ok)
 			throw new Error(
 				`llm -> ${res.status}: ${(await res.text()).slice(0, 400)}`,
@@ -53,15 +67,18 @@ export function createModel(
 	};
 	return {
 		async complete(messages, model) {
+			const deadline = now() + timeoutMs;
 			try {
-				return await once(messages, model);
+				return await once(messages, model, timeoutMs);
 			} catch (error) {
 				if (!(error instanceof SyntaxError)) throw error;
 				logger?.warn(
 					{ error: error.message },
 					"llm response failed to parse, retrying once",
 				);
-				return once(messages, model);
+				const remaining = deadline - now();
+				if (remaining <= 0) throw error;
+				return once(messages, model, remaining);
 			}
 		},
 	};

@@ -13,24 +13,26 @@ import type { DiagnosticLogger, Message, Model } from "./model.js";
 
 const DEFAULT_MODEL = "glm-5.2";
 const RECORDING_SETTLE_DELAY_MS = 1_500;
-const ActionSchema = z.object({
-	thought: z.string().optional(),
-	action: z.enum(["click", "type", "scroll", "navigate", "done"]),
-	ref: z.string().optional(),
-	text: z.string().optional(),
-	pressEnter: z.boolean().optional(),
-	direction: z.string().optional(),
-	url: z.string().optional(),
-	listings: z
-		.array(
-			z.object({
-				title: z.string(),
-				company: z.string(),
-				url: z.string(),
-			}),
-		)
-		.optional(),
-});
+const ActionSchema = z
+	.object({
+		thought: z.string().optional(),
+		action: z.enum(["click", "type", "scroll", "navigate", "done"]),
+		ref: z.string().optional(),
+		text: z.string().optional(),
+		pressEnter: z.boolean().optional(),
+		direction: z.string().optional(),
+		url: z.string().optional(),
+		listings: z
+			.array(
+				z.object({
+					title: z.string(),
+					company: z.string(),
+					url: z.string(),
+				}),
+			)
+			.optional(),
+	})
+	.strict();
 
 type Action = z.infer<typeof ActionSchema>;
 
@@ -40,7 +42,8 @@ export interface RunDependencies {
 	camofoxUrl: string;
 	maxSteps: number;
 	videoSecret: string;
-	wakeBrowser(): Promise<void>;
+	wakeBrowser(timeoutMs?: number): Promise<void>;
+	camofoxTimeoutMs?: number;
 	logger?: DiagnosticLogger & VideoLogger;
 	sleep?: (milliseconds: number) => Promise<void>;
 	capture?: typeof captureScreenshot;
@@ -74,29 +77,20 @@ export function buildStepUserMessage(args: {
 function parseAction(content: string): Record<string, unknown> {
 	let json = content.trim();
 	const fencedJson = json.match(/```(?:json)?\s*([\s\S]*?)```/i);
-	if (fencedJson) {
-		json = fencedJson[1].trim();
-	}
-
+	if (fencedJson) json = fencedJson[1].trim();
 	const firstBrace = json.indexOf("{");
 	const lastBrace = json.lastIndexOf("}");
 	if (firstBrace >= 0 && lastBrace > firstBrace) {
 		json = json.slice(firstBrace, lastBrace + 1);
 	}
-
 	return JSON.parse(json) as Record<string, unknown>;
 }
 
 function tabIdFrom(response: Record<string, unknown>): string {
 	const nestedTab = response.tab as Record<string, unknown> | undefined;
 	const tabId = response.id ?? response.tabId ?? nestedTab?.id;
-	if (typeof tabId === "string" && tabId) {
-		return tabId;
-	}
-
-	throw new Error(
-		`Could not find tab id in POST /tabs response: ${JSON.stringify(response).slice(0, 500)}`,
-	);
+	if (typeof tabId === "string" && tabId) return tabId;
+	throw new Error("Camoufox did not return a tab identifier");
 }
 
 function compressPreviousSnapshot(messages: Message[], step: number): void {
@@ -122,47 +116,45 @@ function resultTokens(totals: TokenTotals): AgentResult["tokens"] {
 	};
 }
 
+function recordingFor(job: AgentJob): RecordingContext | undefined {
+	return job.record
+		? { runDir: join("tmp", job.jobId), filename: `${job.jobId}.mp4` }
+		: undefined;
+}
+
+function operationError(error: unknown): string {
+	if (error instanceof SyntaxError) return "invalid agent action JSON";
+	if (error instanceof Error && error.name === "TimeoutError")
+		return "operation timed out";
+	return "browser or model operation failed";
+}
+
 async function performAction(
 	tabs: Tabs,
 	tabId: string,
 	action: Action,
 ): Promise<void> {
-	try {
-		switch (action.action) {
-			case "click":
-				await tabs.click(tabId, action.ref ?? "");
-				break;
-			case "type":
-				await tabs.type(
+	switch (action.action) {
+		case "click":
+			return tabs.click(tabId, action.ref ?? "").then(() => undefined);
+		case "type":
+			return tabs
+				.type(
 					tabId,
 					action.ref ?? "",
 					action.text ?? "",
 					action.pressEnter ?? false,
-				);
-				break;
-			case "scroll":
-				await tabs.scroll(tabId, action.direction ?? "down");
-				break;
-			case "navigate":
-				await tabs.navigate(tabId, action.url ?? "");
-				break;
-			case "done":
-				break;
-		}
-	} catch {
-		// An action failure is non-fatal; the next snapshot lets the model recover.
+				)
+				.then(() => undefined);
+		case "scroll":
+			return tabs
+				.scroll(tabId, action.direction ?? "down")
+				.then(() => undefined);
+		case "navigate":
+			return tabs.navigate(tabId, action.url ?? "").then(() => undefined);
+		case "done":
+			return;
 	}
-}
-
-function recordingFor(job: AgentJob): RecordingContext | undefined {
-	if (!job.record) {
-		return undefined;
-	}
-
-	return {
-		runDir: join("tmp", job.jobId),
-		filename: `${job.jobId}.mp4`,
-	};
 }
 
 async function captureRecordingFrame(
@@ -172,36 +164,48 @@ async function captureRecordingFrame(
 	step: number,
 	deps: RunDependencies,
 ): Promise<void> {
-	if (!recording) {
-		return;
+	if (!recording) return;
+	try {
+		await (deps.sleep ?? sleep)(RECORDING_SETTLE_DELAY_MS);
+		await (deps.capture ?? captureScreenshot)(
+			tabId,
+			jobId,
+			recording.runDir,
+			step,
+			deps.camofoxUrl,
+			undefined,
+			deps.camofoxTimeoutMs,
+		);
+	} catch (error) {
+		deps.logger?.warn(
+			{ jobId, error: operationError(error) },
+			"recording frame failed",
+		);
 	}
-
-	await (deps.sleep ?? sleep)(RECORDING_SETTLE_DELAY_MS);
-	await (deps.capture ?? captureScreenshot)(
-		tabId,
-		jobId,
-		recording.runDir,
-		step,
-		deps.camofoxUrl,
-	).catch(() => {});
 }
 
 async function finishRecording(
 	recording: RecordingContext | undefined,
+	jobId: string,
 	deps: RunDependencies,
 ): Promise<string | undefined> {
-	if (!recording) {
+	if (!recording) return undefined;
+	try {
+		await mkdir("videos", { recursive: true });
+		const outputPath = join("videos", recording.filename);
+		const stitched = deps.stitch
+			? await deps.stitch(recording.runDir, outputPath)
+			: await stitchVideo(recording.runDir, outputPath, undefined, deps.logger);
+		return stitched
+			? `/videos/${recording.filename}${signVideoUrl(recording.filename, deps.videoSecret)}`
+			: undefined;
+	} catch (error) {
+		deps.logger?.warn(
+			{ jobId, error: operationError(error) },
+			"recording finalization failed",
+		);
 		return undefined;
 	}
-
-	await mkdir("videos", { recursive: true });
-	const outputPath = join("videos", recording.filename);
-	const stitched = deps.stitch
-		? await deps.stitch(recording.runDir, outputPath)
-		: await stitchVideo(recording.runDir, outputPath, undefined, deps.logger);
-	return stitched
-		? `/videos/${recording.filename}${signVideoUrl(recording.filename, deps.videoSecret)}`
-		: undefined;
 }
 
 async function writeResultArtifact(
@@ -211,36 +215,35 @@ async function writeResultArtifact(
 	totals: TokenTotals,
 	logger?: DiagnosticLogger,
 ): Promise<void> {
-	const artifact = [
-		`# ${job.type} — ${new Date().toISOString()}`,
-		"",
-		`**URL:** ${job.url}`,
-		`**Steps:** ${step}`,
-		`**Tokens:** ${totals.prompt + totals.completion} (prompt ${totals.prompt} / completion ${totals.completion})`,
-		"",
-		"```json",
-		JSON.stringify(result, null, 2),
-		"```",
-		"",
-	].join("\n");
-
 	try {
 		await mkdir("results", { recursive: true });
-		await writeFile(join("results", `${job.jobId}-${Date.now()}.md`), artifact);
+		await writeFile(
+			join("results", `${job.jobId}-${Date.now()}.md`),
+			[
+				`# ${job.type} — ${new Date().toISOString()}`,
+				"",
+				`**URL:** ${job.url}`,
+				`**Steps:** ${step}`,
+				`**Tokens:** ${totals.prompt + totals.completion} (prompt ${totals.prompt} / completion ${totals.completion})`,
+				"",
+				"```json",
+				JSON.stringify(result, null, 2),
+				"```",
+				"",
+			].join("\n"),
+		);
 	} catch (error) {
-		// Result artifacts are useful for review but must not fail a completed scrape.
-		const message = error instanceof Error ? error.message : String(error);
 		logger?.warn(
-			{ jobId: job.jobId, error: message },
+			{ jobId: job.jobId, error: operationError(error) },
 			"failed to write result artifact",
 		);
 	}
 }
 
-function completedResult(
+function success(
 	result: unknown,
 	totals: TokenTotals,
-	step: number,
+	steps: number,
 	startedAt: number,
 	videoUrl?: string,
 ): AgentResult {
@@ -248,9 +251,25 @@ function completedResult(
 		ok: true,
 		result,
 		tokens: resultTokens(totals),
-		steps: step,
+		steps,
 		durationMs: Date.now() - startedAt,
 		videoUrl,
+	};
+}
+
+function failure(
+	error: string,
+	totals: TokenTotals,
+	steps: number,
+	startedAt: number,
+): AgentResult {
+	return {
+		ok: false,
+		result: null,
+		error,
+		tokens: resultTokens(totals),
+		steps,
+		durationMs: Date.now() - startedAt,
 	};
 }
 
@@ -260,29 +279,42 @@ export async function runAgent(
 	deps: RunDependencies,
 ): Promise<AgentResult> {
 	const startedAt = Date.now();
-	const tabs = deps.createTabs(job.jobId);
-	const sessionKey = job.sessionKey ?? `scrape-${job.jobId}`;
-	const tab = await createTabWithRetry(
-		(url, key) => tabs.create(url, key),
-		job.url,
-		sessionKey,
-		deps.wakeBrowser,
-	);
-	const tabId = tabIdFrom(tab);
-	const messages: Message[] = [
-		{ role: "system", content: taskConfig.systemPrompt },
-	];
 	const totals: TokenTotals = { prompt: 0, completion: 0 };
+	const tabs = deps.createTabs(job.jobId);
 	const recording = recordingFor(job);
-	let lastResult: unknown = null;
-
-	if (recording) {
-		await mkdir(recording.runDir, { recursive: true });
-	}
-
+	let tabId: string | undefined;
+	let steps = 0;
 	try {
+		const tab = await createTabWithRetry(
+			(url, sessionKey, timeoutMs) => tabs.create(url, sessionKey, timeoutMs),
+			job.url,
+			`scrape-${job.jobId}`,
+			deps.wakeBrowser,
+			{ timeoutMs: deps.camofoxTimeoutMs, sleep: deps.sleep },
+		);
+		tabId = tabIdFrom(tab);
+		if (recording) {
+			try {
+				await mkdir(recording.runDir, { recursive: true });
+			} catch (error) {
+				deps.logger?.warn(
+					{ jobId: job.jobId, error: operationError(error) },
+					"recording setup failed",
+				);
+			}
+		}
+
+		const messages: Message[] = [
+			{ role: "system", content: taskConfig.systemPrompt },
+		];
 		for (let step = 1; step <= deps.maxSteps; step++) {
-			const snapshot = ((await tabs.snapshot(tabId)).snapshot as string) ?? "";
+			steps = step;
+			let snapshot: string;
+			try {
+				snapshot = ((await tabs.snapshot(tabId)).snapshot as string) ?? "";
+			} catch (error) {
+				return failure(operationError(error), totals, steps, startedAt);
+			}
 			compressPreviousSnapshot(messages, step);
 			messages.push({
 				role: "user",
@@ -292,48 +324,68 @@ export async function runAgent(
 					context: job.context,
 				}),
 			});
-
-			const response = await deps.model.complete(
-				messages,
-				job.model ?? DEFAULT_MODEL,
-			);
-			addUsage(totals, response.usage);
-			const parsedAction = ActionSchema.safeParse(
-				parseAction(response.content),
-			);
-			if (!parsedAction.success) {
-				deps.logger?.warn(
-					{ jobId: job.jobId, issues: parsedAction.error.issues },
-					"action failed schema validation",
+			let response: Awaited<ReturnType<Model["complete"]>>;
+			try {
+				response = await deps.model.complete(
+					messages,
+					job.model ?? DEFAULT_MODEL,
 				);
-				break;
+				addUsage(totals, response.usage);
+			} catch (error) {
+				return failure(operationError(error), totals, steps, startedAt);
 			}
-
-			const action = parsedAction.data;
+			let action: Action;
+			try {
+				const parsed = ActionSchema.safeParse(parseAction(response.content));
+				if (!parsed.success) {
+					deps.logger?.warn(
+						{ jobId: job.jobId, issueCount: parsed.error.issues.length },
+						"action failed schema validation",
+					);
+					return failure(
+						"invalid agent action schema",
+						totals,
+						steps,
+						startedAt,
+					);
+				}
+				action = parsed.data;
+			} catch (error) {
+				deps.logger?.warn(
+					{ jobId: job.jobId, error: operationError(error) },
+					"action JSON parsing failed",
+				);
+				return failure("invalid agent action JSON", totals, steps, startedAt);
+			}
 			if (action.action === "done") {
-				lastResult = taskConfig.processResult(action);
-				await tabs.close(tabId);
-				const videoUrl = await finishRecording(recording, deps);
-				await writeResultArtifact(job, lastResult, step, totals, deps.logger);
-				return completedResult(lastResult, totals, step, startedAt, videoUrl);
+				try {
+					const result = await taskConfig.processResult(action);
+					const videoUrl = await finishRecording(recording, job.jobId, deps);
+					await writeResultArtifact(job, result, steps, totals, deps.logger);
+					return success(result, totals, steps, startedAt, videoUrl);
+				} catch (error) {
+					return failure(operationError(error), totals, steps, startedAt);
+				}
 			}
-
-			await performAction(tabs, tabId, action);
+			try {
+				await performAction(tabs, tabId, action);
+			} catch (error) {
+				deps.logger?.warn(
+					{
+						jobId: job.jobId,
+						action: action.action,
+						error: operationError(error),
+					},
+					"recoverable browser action failed",
+				);
+			}
 			await captureRecordingFrame(recording, tabId, job.jobId, step, deps);
 			messages.push({ role: "assistant", content: response.content });
 		}
-
-		await tabs.close(tabId);
-		const videoUrl = await finishRecording(recording, deps);
-		return completedResult(
-			lastResult,
-			totals,
-			deps.maxSteps,
-			startedAt,
-			videoUrl,
-		);
+		return failure("agent step limit exhausted", totals, steps, startedAt);
 	} catch (error) {
-		await tabs.close(tabId).catch(() => {});
-		throw error;
+		return failure(operationError(error), totals, steps, startedAt);
+	} finally {
+		if (tabId) await tabs.close(tabId).catch(() => {});
 	}
 }

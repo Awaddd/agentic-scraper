@@ -8,6 +8,8 @@ POST /scrape/jobs
 
 The service responds immediately with `202 Accepted`, then posts the final result to `webhookUrl`.
 
+All scrape requests require `Authorization: Bearer <SCRAPER_API_KEY>`, except an explicitly enabled loopback-only local bypass. `GET /health` does not require this header; signed video URLs remain authorized by their URL token.
+
 ```json
 {
   "url": "https://example.com/jobs",
@@ -30,8 +32,6 @@ The service responds immediately with `202 Accepted`, then posts the final resul
 | `record` | no | Capture a browser-session MP4. |
 | `context` | no | JSON context made available to the agent. |
 | `metadata` | no | Opaque metadata echoed in the webhook payload; it is not added to the agent prompt. |
-| `sessionKey` | no | Reuse a browser session when your authorised workflow requires it. |
-| `credentials` | no | `{ "cookie": "..." }`, held in memory only. |
 
 Successful dispatch:
 
@@ -71,11 +71,11 @@ Failures use the same shape with `ok: false`, `result: null`, and an `error` fie
 When `SCRAPER_WEBHOOK_SECRET` is configured, callbacks include:
 
 ```text
-X-Scraper-Signature: <HMAC-SHA256 of the raw request body>
+X-Scraper-Signature: <HMAC-SHA256 of "<timestamp>.<raw request body>">
 X-Scraper-Timestamp: <ISO-8601 timestamp>
 ```
 
-Verify the signature against the exact raw request bytes before parsing JSON, and reject stale timestamps to defend against replay.
+Verify the signature against the exact timestamp and raw request bytes before parsing JSON. Enforce a short timestamp freshness window, and optionally store accepted signature/timestamp pairs to reject replays.
 
 ## Health check
 

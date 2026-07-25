@@ -1,7 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AgentJob, TaskBuilder } from "./jobs/contracts.js";
+import { fetchWithTimeout } from "./lib/abortable-fetch.js";
+import {
+	type OutboundUrlPolicyOptions,
+	validateOutboundUrl,
+} from "./outbound-url-policy.js";
 
 const RequestSchema = z
 	.object({
@@ -15,13 +20,8 @@ const RequestSchema = z
 				"webhookUrl must be a valid http/https URL",
 			),
 		context: z.record(z.string(), z.unknown()).optional(),
-		sessionKey: z.string().optional(),
 		model: z.string().optional(),
 		record: z.boolean().optional(),
-		credentials: z
-			.object({ cookie: z.string().optional() })
-			.strict()
-			.optional(),
 		metadata: z.record(z.string(), z.unknown()).optional(),
 	})
 	.strict();
@@ -31,6 +31,10 @@ type ScrapeRequest = z.infer<typeof RequestSchema>;
 export interface AppDependencies {
 	camofoxUrl: string;
 	videoSecret: string;
+	apiKey?: string;
+	allowInsecureLocal?: boolean;
+	camofoxTimeoutMs?: number;
+	outboundPolicy?: OutboundUrlPolicyOptions;
 	tasks: Record<string, TaskBuilder>;
 	dispatch(job: AgentJob): Promise<void>;
 	verifyVideo(filename: string, token: string, expiry: string): boolean;
@@ -59,9 +63,16 @@ function isValidVideoFilename(filename: string): boolean {
 async function checkBrowserHealth(
 	camofoxUrl: string,
 	fetcher: typeof fetch,
+	timeoutMs: number,
 ): Promise<boolean> {
 	const getHealth = async (): Promise<boolean> => {
-		const response = await fetcher(`${camofoxUrl}/health`);
+		const response = await fetchWithTimeout(
+			fetcher,
+			`${camofoxUrl}/health`,
+			{},
+			timeoutMs,
+			"browser health check",
+		);
 		const body = (await response.json()) as { browserConnected?: boolean };
 		return body.browserConnected === true;
 	};
@@ -70,14 +81,27 @@ async function checkBrowserHealth(
 	return connected || getHealth();
 }
 
+function isAuthorized(header: string | undefined, apiKey: string): boolean {
+	const prefix = "Bearer ";
+	if (!header?.startsWith(prefix)) return false;
+	const candidate = header.slice(prefix.length);
+	if (candidate.length !== apiKey.length) return false;
+	return timingSafeEqual(Buffer.from(candidate), Buffer.from(apiKey));
+}
+
 export function createApp(deps: AppDependencies) {
 	const app = new Hono();
 	const fetcher = deps.fetcher ?? fetch;
 	const createId = deps.createId ?? randomUUID;
+	const healthTimeoutMs = deps.camofoxTimeoutMs ?? 20_000;
 
 	app.get("/health", async (context) => {
 		try {
-			const connected = await checkBrowserHealth(deps.camofoxUrl, fetcher);
+			const connected = await checkBrowserHealth(
+				deps.camofoxUrl,
+				fetcher,
+				healthTimeoutMs,
+			);
 			return context.json(
 				{ ok: connected, browserConnected: connected },
 				connected ? 200 : 503,
@@ -88,6 +112,15 @@ export function createApp(deps: AppDependencies) {
 	});
 
 	app.post("/scrape/:type", async (context) => {
+		if (
+			deps.apiKey &&
+			!isAuthorized(context.req.header("Authorization"), deps.apiKey)
+		) {
+			return context.json({ error: "Unauthorized" }, 401);
+		}
+		if (!deps.apiKey && !deps.allowInsecureLocal) {
+			return context.json({ error: "Unauthorized" }, 401);
+		}
 		const type = context.req.param("type");
 		if (!Object.hasOwn(deps.tasks, type)) {
 			return context.json({ error: `Unknown task type: ${type}` }, 404);
@@ -98,6 +131,19 @@ export function createApp(deps: AppDependencies) {
 		);
 		if (!request.success) {
 			return context.json({ error: errorMessage(request.error) }, 400);
+		}
+		try {
+			const [url, webhookUrl] = await Promise.all([
+				validateOutboundUrl(request.data.url, deps.outboundPolicy),
+				validateOutboundUrl(request.data.webhookUrl, deps.outboundPolicy),
+			]);
+			request.data.url = url.toString();
+			request.data.webhookUrl = webhookUrl.toString();
+		} catch {
+			return context.json(
+				{ error: "URL is not allowed by outbound policy" },
+				400,
+			);
 		}
 
 		const job = createJob(type, request.data, createId);

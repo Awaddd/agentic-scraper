@@ -14,10 +14,22 @@ import { verifySignedUrl } from "./recording/signed-url.js";
 
 const config = loadConfig();
 const logger = pino({ level: "info" });
-const tasks = { jobs: buildJobsConfig };
+const outboundPolicy = {
+	mode: config.SCRAPER_ALLOW_INSECURE_LOCAL
+		? ("loopback" as const)
+		: ("public" as const),
+};
+const tasks = {
+	jobs: (job: Parameters<typeof buildJobsConfig>[0]) =>
+		buildJobsConfig(job, outboundPolicy),
+};
 const app = createApp({
 	camofoxUrl: config.CAMOFOX_URL,
 	videoSecret: config.VIDEO_SECRET,
+	apiKey: config.SCRAPER_API_KEY,
+	allowInsecureLocal: config.SCRAPER_ALLOW_INSECURE_LOCAL,
+	camofoxTimeoutMs: config.CAMOFOX_TIMEOUT_MS,
+	outboundPolicy,
 	tasks,
 	dispatch: (job) =>
 		dispatchJob(job, {
@@ -30,22 +42,41 @@ const app = createApp({
 						config.OLLAMA_API_KEY,
 						fetch,
 						logger,
+						config.MODEL_TIMEOUT_MS,
 					),
-					createTabs: (userId) => createCamofox(config.CAMOFOX_URL, userId),
+					createTabs: (userId) =>
+						createCamofox(config.CAMOFOX_URL, userId, fetch, {
+							timeoutMs: config.CAMOFOX_TIMEOUT_MS,
+							outboundPolicy,
+						}),
 					camofoxUrl: config.CAMOFOX_URL,
 					maxSteps: config.MAX_STEPS,
 					videoSecret: config.VIDEO_SECRET,
-					wakeBrowser: () => wakeBrowser(config.CAMOFOX_URL),
+					camofoxTimeoutMs: config.CAMOFOX_TIMEOUT_MS,
+					wakeBrowser: (timeoutMs) =>
+						wakeBrowser(config.CAMOFOX_URL, fetch, timeoutMs),
 					logger,
 				}),
 			deliver: (url, payload) =>
-				deliverWebhook(url, payload, config.SCRAPER_WEBHOOK_SECRET),
+				deliverWebhook(
+					url,
+					payload,
+					config.SCRAPER_WEBHOOK_SECRET,
+					fetch,
+					config.WEBHOOK_TIMEOUT_MS,
+					outboundPolicy,
+				),
 		}),
 	verifyVideo: (filename, token, expiry) =>
 		verifySignedUrl(filename, token, expiry, config.VIDEO_SECRET),
 	fileExists: access,
 	openVideo: createReadStream,
 });
-serve({ fetch: app.fetch, port: config.PORT }, () =>
-	logger.info({ port: config.PORT }, "agentic scraper started"),
+serve(
+	{ fetch: app.fetch, port: config.PORT, hostname: config.SCRAPER_HOST },
+	() =>
+		logger.info(
+			{ host: config.SCRAPER_HOST, port: config.PORT },
+			"agentic scraper started",
+		),
 );

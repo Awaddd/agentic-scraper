@@ -1,11 +1,22 @@
 services:
   camofox-browser:
+    platform: ${COMPOSE_PLATFORM:?Run scripts/build-compose.sh <x86_64|aarch64>}
     build:
       context: ../camofox-browser
       dockerfile: Dockerfile
+      args:
+        ARCH: ${CAMOFOX_ARCH:?Run scripts/build-compose.sh <x86_64|aarch64>}
+    environment:
+      CAMOFOX_OUTBOUND_POLICY: public
     restart: unless-stopped
     networks:
       - scraper_net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:9377/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   scraper:
     build: .
@@ -14,10 +25,16 @@ services:
       - "3000:3000"
     environment:
       CAMOFOX_URL: http://camofox-browser:9377
+      SCRAPER_HOST: 0.0.0.0
+      SCRAPER_ALLOW_INSECURE_LOCAL: "false"
+      SCRAPER_API_KEY: ${SCRAPER_API_KEY:?SCRAPER_API_KEY is required}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-https://ollama.com/v1}
       VIDEO_SECRET: ${VIDEO_SECRET}
       SCRAPER_WEBHOOK_SECRET: ${SCRAPER_WEBHOOK_SECRET:-}
+      MODEL_TIMEOUT_MS: ${MODEL_TIMEOUT_MS:-30000}
+      CAMOFOX_TIMEOUT_MS: ${CAMOFOX_TIMEOUT_MS:-20000}
+      WEBHOOK_TIMEOUT_MS: ${WEBHOOK_TIMEOUT_MS:-10000}
       PORT: "3000"
     volumes:
       - videos:/app/videos
@@ -26,7 +43,8 @@ services:
     networks:
       - scraper_net
     depends_on:
-      - camofox-browser
+      camofox-browser:
+        condition: service_healthy
 
 networks:
   scraper_net:
