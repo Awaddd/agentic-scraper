@@ -23,4 +23,5 @@ readonly BROWSER_DIR="$SCRAPER_DIR/../camofox-browser"
 make -C "$BROWSER_DIR" fetch ARCH="$1"
 export CAMOFOX_ARCH="$1"
 export COMPOSE_PLATFORM="$platform"
-exec docker compose -f "$SCRAPER_DIR/docker-compose.yml" build
+docker compose -f "$SCRAPER_DIR/docker-compose.yml" build
+exec docker compose -f "$SCRAPER_DIR/docker-compose.yml" up -d

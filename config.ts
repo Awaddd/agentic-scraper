@@ -3,7 +3,11 @@ import { z } from "zod";
 
 const EnvSchema = z.object({
 	VIDEO_SECRET: z.string().min(1, "VIDEO_SECRET env var is required"),
-	SCRAPER_API_KEY: z.string().min(1).optional(),
+	SCRAPER_API_KEY: z.preprocess(
+		(value) =>
+			typeof value === "string" && value.trim() === "" ? undefined : value,
+		z.string().min(1).optional(),
+	),
 	SCRAPER_ALLOW_INSECURE_LOCAL: z
 		.preprocess(
 			(value) =>

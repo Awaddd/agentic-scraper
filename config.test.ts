@@ -28,4 +28,14 @@ describe("config", () => {
 			}),
 		).toThrow("SCRAPER_HOST");
 	});
+	it("treats a blank API key as unset for the explicit local bypass", () => {
+		expect(
+			loadConfig({
+				VIDEO_SECRET: "x",
+				SCRAPER_API_KEY: "",
+				SCRAPER_ALLOW_INSECURE_LOCAL: "true",
+				SCRAPER_HOST: "127.0.0.1",
+			}).SCRAPER_API_KEY,
+		).toBeUndefined();
+	});
 });

@@ -8,7 +8,7 @@ POST /scrape/jobs
 
 The service responds immediately with `202 Accepted`, then posts the final result to `webhookUrl`.
 
-All scrape requests require `Authorization: Bearer <SCRAPER_API_KEY>`, except an explicitly enabled loopback-only local bypass. `GET /health` does not require this header; signed video URLs remain authorized by their URL token.
+All scrape requests require `Authorization: Bearer <SCRAPER_API_KEY>`, except an explicitly enabled loopback-only local bypass with no key configured. When a key is configured, it remains enforced. `GET /health` does not require this header; signed video URLs remain authorized by their URL token.
 
 ```json
 {

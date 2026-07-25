@@ -13,8 +13,10 @@ if [[ ! -e "${patches[0]}" ]]; then
   exit 1
 fi
 
+new_clone=false
 if [[ ! -e "$BROWSER_DIR" ]]; then
   git clone "$BROWSER_REPOSITORY" "$BROWSER_DIR"
+  new_clone=true
 fi
 if [[ ! -d "$BROWSER_DIR/.git" ]]; then
   echo "Expected a Git checkout at: $BROWSER_DIR" >&2
@@ -23,34 +25,22 @@ fi
 
 cd "$BROWSER_DIR"
 
-all_applied=true
-all_unapplied=true
-for patch in "${patches[@]}"; do
-  if git apply --reverse --check "$patch" 2>/dev/null; then
-    all_unapplied=false
-  elif git apply --check "$patch" 2>/dev/null; then
-    all_applied=false
-  else
-    echo "Patch is incompatible with the pinned browser source: $patch" >&2
-    exit 1
-  fi
-done
+if [[ "$new_clone" != true && -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+  expected_dir="$(mktemp -d)"
+  trap 'rm -rf "$expected_dir"' EXIT
+  git clone --quiet --no-checkout "$BROWSER_DIR" "$expected_dir"
+  git -C "$expected_dir" checkout --detach "$PINNED_COMMIT"
+  for patch in "${patches[@]}"; do
+    git -C "$expected_dir" apply --check "$patch"
+  done
+  git -C "$expected_dir" apply "${patches[@]}"
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  if [[ "$all_applied" != true ]]; then
-    echo "Refusing to modify a browser checkout with local changes." >&2
-    exit 1
+  if diff -qr --exclude=.git "$expected_dir" "$BROWSER_DIR" >/dev/null; then
+    echo "Pinned Camoufox patches are already applied."
+    exit 0
   fi
-  dirty_paths="$(git diff --name-only; git diff --cached --name-only)"
-  while IFS= read -r path; do
-    [[ -z "$path" ]] && continue
-    if ! printf '%s\n' "${patches[@]}" | xargs grep -q "^+++ b/$path$"; then
-      echo "Refusing unrelated local browser modification: $path" >&2
-      exit 1
-    fi
-  done <<< "$dirty_paths"
-  echo "Pinned Camoufox patches are already applied."
-  exit 0
+  echo "Refusing browser checkout with local or untracked changes." >&2
+  exit 1
 fi
 
 git fetch --quiet origin "$PINNED_COMMIT"

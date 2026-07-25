@@ -155,8 +155,7 @@ npm test
 The included Compose file starts the scraper and its pinned Camoufox browser service. Use the wrapper so the sibling is a clean detached checkout, the patch set is validated before application, and the browser artifacts use an explicit architecture:
 
 ```bash
-./scripts/build-compose.sh x86_64 # or aarch64
-docker compose up -d
+./scripts/build-compose.sh x86_64 # or aarch64; builds and starts the stack
 ```
 
 `videos/` is stored in a named Docker volume. Temporary screenshots are stored in a container tmpfs.
@@ -167,7 +166,7 @@ See the [API guide](docs/agent-guide.md) for request and webhook examples.
 
 ## Security and responsible use
 
-- `POST /scrape/:type` requires `Authorization: Bearer <SCRAPER_API_KEY>`; `/health` remains public and signed video URLs remain token-protected.
+- `POST /scrape/:type` requires `Authorization: Bearer <SCRAPER_API_KEY>`; the explicit loopback-only local bypass permits an unset key, but a supplied key remains enforced. `/health` remains public and signed video URLs remain token-protected.
 - Starting URLs, browser navigation, webhook delivery, and projected listing URLs use a DNS-aware public-outbound policy. `SCRAPER_ALLOW_INSECURE_LOCAL=true` is an explicit loopback-only development exception and requires a loopback `SCRAPER_HOST`.
 - Webhook payloads can be HMAC-signed with `SCRAPER_WEBHOOK_SECRET` over `<timestamp>.<rawBody>`.
 - Recorded video URLs use expiring HMAC tokens.
