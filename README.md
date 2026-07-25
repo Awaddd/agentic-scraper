@@ -9,10 +9,10 @@ Give the service a starting URL, a natural-language goal, and a webhook callback
 1. Accepts `POST /scrape/jobs` and immediately returns a job ID.
 2. Opens a browser tab and gives the LLM an accessibility snapshot of the page.
 3. Repeats a bounded click, type, scroll, or navigate loop until the agent completes.
-4. Posts normalised job listings to the supplied webhook URL.
+4. Posts the task's structured result to the supplied webhook URL.
 5. Can optionally turn per-step screenshots into a signed MP4 recording.
 
-The current public task is deliberately narrow: job-listing extraction. Its task-specific filtering of ads, sponsored placements, tracking URLs, and incomplete listing data is documented in the architecture and task modules for contributors.
+The public extract includes a job-listing task as a reference implementation. Its task-specific filtering of ads, sponsored placements, tracking URLs, and incomplete listing data is documented in the architecture and task modules for contributors. Additional task types can define their own prompt and result projection.
 
 ## Architecture
 
@@ -160,7 +160,7 @@ Use this project only with websites and data you are authorised to access, and r
 
 ## Status
 
-This is a curated public extract of an actively used private project. It is useful as a reference implementation and is still evolving; issues and feedback are welcome.
+This project is evolving; issues and feedback are welcome.
 
 ## License
 
