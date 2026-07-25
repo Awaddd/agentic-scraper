@@ -1,10 +1,10 @@
 diff --git a/package.json b/package.json
-index 4f61ed9..bbf1077 100644
 --- a/package.json
 +++ b/package.json
 @@ -134,7 +134,7 @@
    "dependencies": {
-     "camoufox-js": "0.10.2",
+-    "camoufox-js": ">=0.10.0",
++    "camoufox-js": "0.10.2",
      "express": "^4.18.2",
 -    "playwright-core": "^1.58.0",
 +    "playwright-core": "1.60.0",

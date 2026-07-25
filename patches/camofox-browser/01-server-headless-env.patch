@@ -1,9 +1,8 @@
 diff --git a/server.js b/server.js
-index e54fc17..86cf04f 100644
 --- a/server.js
 +++ b/server.js
-@@ -1046,7 +1046,7 @@ async function launchBrowserInstance() {
-       }
+@@ -976,9 +976,9 @@ async function launchBrowserInstance() {
+     try {
        const options = await launchOptions({
          executable_path: externalCamoufox?.executablePath,
 -        headless: useVirtualDisplay ? false : true,
@@ -11,3 +10,5 @@ index e54fc17..86cf04f 100644
          os: hostOS,
          humanize: true,
          enable_cache: true,
+         proxy: launchProxy,
+         geoip: !!launchProxy,

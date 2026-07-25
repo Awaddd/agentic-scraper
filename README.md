@@ -42,6 +42,15 @@ Projects/
   agentic-scraper/
 ```
 
+From the `agentic-scraper` directory, bootstrap the browser checkout once:
+
+```bash
+git clone https://github.com/jo-inc/camofox-browser.git ../camofox-browser
+./scripts/install-camofox-browser.sh
+```
+
+The bootstrap applies the required patches, pins `camoufox-js` to `0.10.2`, and downloads Camoufox `135.0.1-beta.24` for macOS or Linux. It is safe to rerun. The browser bundle stays in ignored local state for this checkout.
+
 ```bash
 cp .env.example .env
 npm install
@@ -68,8 +77,7 @@ PORT=3000
 Start Camoufox in another terminal. Set `CAMOUFOX_HEADLESS=false` when you want to watch the browser work:
 
 ```bash
-cd ../camofox-browser
-CAMOUFOX_HEADLESS=false npm start
+CAMOUFOX_HEADLESS=false ./scripts/start-camofox-browser.sh
 ```
 
 Start the scraper:
@@ -97,7 +105,7 @@ curl -X POST http://localhost:3000/scrape/jobs \
   -H 'Content-Type: application/json' \
   --data '{
     "url": "https://weworkremotely.com",
-    "goal": "Find remote software-engineering roles. Return only real job listings with a title, company, and direct job URL.",
+    "goal": "Find exactly two remote product-design roles. Return only real job listings with a title, company, and direct job URL.",
     "webhookUrl": "http://localhost:4000",
     "model": "glm-5.2"
   }'
@@ -114,14 +122,14 @@ The callback receiver then prints the completed result. A representative result 
 ```json
 [
   {
-    "title": "Senior Infrastructure Software Engineer",
-    "company": "Dropbox",
-    "url": "https://weworkremotely.com/remote-jobs/dropbox-senior-infrastructure-software-engineer"
+    "title": "Senior Staff Product Designer, Risk",
+    "company": "Stripe",
+    "url": "https://weworkremotely.com/remote-jobs/stripe-senior-staff-product-designer-risk"
   },
   {
-    "title": "Senior Software Engineer, Identity",
+    "title": "Lead Product Designer",
     "company": "Twilio",
-    "url": "https://weworkremotely.com/remote-jobs/twilio-senior-software-engineer-identity"
+    "url": "https://weworkremotely.com/remote-jobs/twilio-lead-product-designer"
   }
 ]
 ```

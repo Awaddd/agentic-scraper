@@ -4,6 +4,7 @@
 dist/
 node_modules/
 videos/
+.camofox/
 tmp/
 specs/
 zDocs/
