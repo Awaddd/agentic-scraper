@@ -35,7 +35,28 @@ if [[ "$new_clone" != true && -n "$(git status --porcelain=v1 --untracked-files=
   done
   git -C "$expected_dir" apply "${patches[@]}"
 
-  if diff -qr --exclude=.git "$expected_dir" "$BROWSER_DIR" >/dev/null; then
+  expected_diff="$expected_dir/.git/expected.diff"
+  browser_diff="$expected_dir/.git/browser.diff"
+  expected_untracked="$expected_dir/.git/expected.untracked"
+  browser_untracked="$expected_dir/.git/browser.untracked"
+  git -C "$expected_dir" diff --binary "$PINNED_COMMIT" > "$expected_diff"
+  git diff --binary "$PINNED_COMMIT" > "$browser_diff"
+  git -C "$expected_dir" ls-files --others --exclude-standard -z > "$expected_untracked"
+  git ls-files --others --exclude-standard -z > "$browser_untracked"
+
+  untracked_matches=true
+  if ! cmp -s "$expected_untracked" "$browser_untracked"; then
+    untracked_matches=false
+  else
+    while IFS= read -r -d '' path; do
+      if ! cmp -s "$expected_dir/$path" "$BROWSER_DIR/$path"; then
+        untracked_matches=false
+        break
+      fi
+    done < "$expected_untracked"
+  fi
+
+  if cmp -s "$expected_diff" "$browser_diff" && [[ "$untracked_matches" == true ]]; then
     echo "Pinned Camoufox patches are already applied."
     exit 0
   fi
