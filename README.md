@@ -48,7 +48,7 @@ From the `agentic-scraper` directory, bootstrap the pinned browser checkout once
 ./scripts/install-camofox-browser.sh
 ```
 
-The bootstrap applies the required patches, pins `camoufox-js` to `0.10.2`, and downloads Camoufox `135.0.1-beta.24` for macOS or Linux. It is safe to rerun. The browser bundle stays in ignored local state for this checkout.
+The bootstrap applies the required patches, pins `camoufox-js` to `0.10.2`, and downloads Camoufox `135.0.1-beta.24` for macOS or Linux. It is safe to rerun. This is a pinned browser build/setup: browser and downloader artifacts are fetched at setup time without committed digest verification, so it does not claim cryptographic or byte-for-byte reproducibility. The browser bundle stays in ignored local state for this checkout.
 
 ```bash
 cp .env.example .env

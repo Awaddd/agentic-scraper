@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { stitchVideo } from "./video.js";
 
 describe("recording", () => {
-	it("invokes ffmpeg with argument-based options and removes frames only after success", async () => {
+	it("invokes ffmpeg with argument-based options and cleans frames after success", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "scraper-video-"));
 		await writeFile(join(directory, "step-0001.png"), "frame");
 		const execute = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
@@ -28,12 +28,12 @@ describe("recording", () => {
 				"yuv420p",
 				expect.stringMatching(/videos\/out\.mp4$/),
 			],
-			{ cwd: directory },
+			{ cwd: directory, signal: expect.any(AbortSignal) },
 		);
 		expect(await readdir(directory)).toEqual([]);
 	});
 
-	it("warns when ffmpeg is unavailable and retains frames", async () => {
+	it("warns when ffmpeg is unavailable and cleans frames", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "scraper-video-"));
 		await writeFile(join(directory, "step-0001.png"), "frame");
 		const logger = { warn: vi.fn() };
@@ -45,15 +45,16 @@ describe("recording", () => {
 				logger,
 			),
 		).resolves.toBe(false);
-		expect(await readdir(directory)).toContain("step-0001.png");
+		expect(await readdir(directory)).toEqual([]);
 		expect(logger.warn).toHaveBeenCalledWith(
 			{ error: "spawn ffmpeg ENOENT" },
 			"ffmpeg unavailable — skipping video production",
 		);
 	});
 
-	it("warns when ffmpeg stitching fails", async () => {
+	it("cleans frames when ffmpeg stitching fails", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "scraper-video-"));
+		await writeFile(join(directory, "step-0001.png"), "frame");
 		const logger = { warn: vi.fn() };
 		await expect(
 			stitchVideo(
@@ -67,5 +68,30 @@ describe("recording", () => {
 			{ error: "encoding failed" },
 			"ffmpeg stitch failed",
 		);
+		expect(await readdir(directory)).toEqual([]);
+	});
+
+	it("aborts ffmpeg and cleans frames when stitching exceeds its deadline", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "scraper-video-"));
+		await writeFile(join(directory, "step-0001.png"), "frame");
+		const logger = { warn: vi.fn() };
+		let aborted = false;
+		const execute = vi.fn(
+			(_command: string, _args: string[], options: { signal?: AbortSignal }) =>
+				new Promise<void>((_resolve, reject) => {
+					options.signal?.addEventListener("abort", () => {
+						aborted = true;
+						reject(new Error("aborted"));
+					});
+				}),
+		);
+
+		await expect(
+			stitchVideo(directory, "videos/out.mp4", execute as never, logger, 1),
+		).resolves.toBe(false);
+
+		expect(aborted).toBe(true);
+		expect(logger.warn).toHaveBeenCalledWith({}, "ffmpeg stitch timed out");
+		expect(await readdir(directory)).toEqual([]);
 	});
 });

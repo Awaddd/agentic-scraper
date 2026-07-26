@@ -105,6 +105,69 @@ describe("agent loop", () => {
 		await execution;
 		expect(capture).toHaveBeenCalledOnce();
 	});
+	it("keeps a completed scrape successful when recording does not produce a video", async () => {
+		const transport = tabs();
+		const logger = { warn: vi.fn() };
+		const result = await runAgent(
+			{ ...job, record: true },
+			{ systemPrompt: "s", processResult: () => [{ title: "result" }] },
+			{
+				model: {
+					complete: vi.fn().mockResolvedValue({
+						content: '{"action":"done"}',
+						usage: { prompt_tokens: 0, completion_tokens: 0 },
+					}),
+				},
+				createTabs: () => transport,
+				camofoxUrl: "http://c",
+				maxSteps: 1,
+				videoSecret: "s",
+				wakeBrowser: vi.fn(),
+				stitch: vi.fn().mockResolvedValue(false),
+				logger,
+			},
+		);
+
+		expect(result).toMatchObject({ ok: true, result: [{ title: "result" }] });
+		expect(result).not.toHaveProperty("videoUrl");
+		expect(transport.close).toHaveBeenCalledOnce();
+		expect(logger.warn).toHaveBeenCalledWith(
+			{ jobId: "run-test" },
+			"recording stitch did not produce video",
+		);
+	});
+	it("bounds injected recording finalization and still closes a successful scrape", async () => {
+		const transport = tabs();
+		const logger = { warn: vi.fn() };
+		const result = await runAgent(
+			{ ...job, record: true },
+			{ systemPrompt: "s", processResult: () => [] },
+			{
+				model: {
+					complete: vi.fn().mockResolvedValue({
+						content: '{"action":"done"}',
+						usage: { prompt_tokens: 0, completion_tokens: 0 },
+					}),
+				},
+				createTabs: () => transport,
+				camofoxUrl: "http://c",
+				maxSteps: 1,
+				videoSecret: "s",
+				wakeBrowser: vi.fn(),
+				stitch: () => new Promise<boolean>(() => undefined),
+				recordingTimeoutMs: 1,
+				logger,
+			},
+		);
+
+		expect(result).toMatchObject({ ok: true, result: [] });
+		expect(result).not.toHaveProperty("videoUrl");
+		expect(transport.close).toHaveBeenCalledOnce();
+		expect(logger.warn).toHaveBeenCalledWith(
+			{ jobId: "run-test" },
+			"recording finalization timed out",
+		);
+	});
 	it("keeps the real sleep pending until 1.5 seconds have elapsed", async () => {
 		vi.useFakeTimers();
 		try {

@@ -5,6 +5,8 @@ import type { AgentJob, AgentResult, TaskConfig } from "../jobs/contracts.js";
 import { signVideoUrl } from "../recording/signed-url.js";
 import {
 	captureScreenshot,
+	cleanupFrames,
+	DEFAULT_FFMPEG_TIMEOUT_MS,
 	stitchVideo,
 	type VideoLogger,
 } from "../recording/video.js";
@@ -44,6 +46,7 @@ export interface RunDependencies {
 	videoSecret: string;
 	wakeBrowser(timeoutMs?: number): Promise<void>;
 	camofoxTimeoutMs?: number;
+	recordingTimeoutMs?: number;
 	logger?: DiagnosticLogger & VideoLogger;
 	sleep?: (milliseconds: number) => Promise<void>;
 	capture?: typeof captureScreenshot;
@@ -190,22 +193,67 @@ async function finishRecording(
 	deps: RunDependencies,
 ): Promise<string | undefined> {
 	if (!recording) return undefined;
+	const timeoutMs = deps.recordingTimeoutMs ?? DEFAULT_FFMPEG_TIMEOUT_MS;
 	try {
 		await mkdir("videos", { recursive: true });
 		const outputPath = join("videos", recording.filename);
-		const stitched = deps.stitch
-			? await deps.stitch(recording.runDir, outputPath)
-			: await stitchVideo(recording.runDir, outputPath, undefined, deps.logger);
-		return stitched
-			? `/videos/${recording.filename}${signVideoUrl(recording.filename, deps.videoSecret)}`
-			: undefined;
+		const stitch = deps.stitch
+			? deps.stitch(recording.runDir, outputPath)
+			: stitchVideo(
+					recording.runDir,
+					outputPath,
+					undefined,
+					deps.logger,
+					timeoutMs,
+				);
+		const stitched = await withRecordingTimeout(stitch, timeoutMs);
+		if (!stitched) {
+			deps.logger?.warn({ jobId }, "recording stitch did not produce video");
+			return undefined;
+		}
+		return `/videos/${recording.filename}${signVideoUrl(recording.filename, deps.videoSecret)}`;
 	} catch (error) {
+		if (error instanceof RecordingTimeoutError) {
+			deps.logger?.warn({ jobId }, "recording finalization timed out");
+			return undefined;
+		}
 		deps.logger?.warn(
 			{ jobId, error: operationError(error) },
 			"recording finalization failed",
 		);
 		return undefined;
+	} finally {
+		await cleanupFrames(recording.runDir, deps.logger);
 	}
+}
+
+class RecordingTimeoutError extends Error {
+	constructor() {
+		super("recording finalization timed out");
+		this.name = "RecordingTimeoutError";
+	}
+}
+
+function withRecordingTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(
+			() => reject(new RecordingTimeoutError()),
+			timeoutMs,
+		);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error: unknown) => {
+				clearTimeout(timer);
+				reject(error);
+			},
+		);
+	});
 }
 
 async function writeResultArtifact(
@@ -253,7 +301,7 @@ function success(
 		tokens: resultTokens(totals),
 		steps,
 		durationMs: Date.now() - startedAt,
-		videoUrl,
+		...(videoUrl ? { videoUrl } : {}),
 	};
 }
 

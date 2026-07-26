@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..589e1e6
 --- /dev/null
 +++ b/lib/outbound-policy.js
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,79 @@
 +import { lookup } from 'node:dns/promises';
 +import { isIP } from 'node:net';
 +
@@ -52,7 +52,7 @@ index 0000000..589e1e6
 +  } catch {
 +    return false;
 +  }
-+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return true;
++  if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return true;
 +  if (url.username || url.password) return false;
 +  const hostname = url.hostname.replace(/^\[|\]$/g, '');
 +  let addresses;
@@ -73,6 +73,14 @@ index 0000000..589e1e6
 +    try { host = new URL(url).hostname; } catch {}
 +    log('warn', 'blocked outbound browser request', { host, resourceType: request.resourceType() });
 +    return route.abort('blockedbyclient');
++  });
++  await context.routeWebSocket('**/*', async (webSocket) => {
++    const url = webSocket.url();
++    if (await outboundUrlAllowed(url, mode)) return webSocket.connectToServer();
++    let host = 'unknown';
++    try { host = new URL(url).hostname; } catch {}
++    log('warn', 'blocked outbound browser websocket', { host, resourceType: 'websocket' });
++    return webSocket.close();
 +  });
 +}
 diff --git a/server.js b/server.js

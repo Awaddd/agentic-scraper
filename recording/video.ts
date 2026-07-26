@@ -5,9 +5,26 @@ import { promisify } from "node:util";
 import { fetchWithTimeout } from "../lib/abortable-fetch.js";
 
 const execFileAsync = promisify(execFile);
+export const DEFAULT_FFMPEG_TIMEOUT_MS = 30_000;
 
 export interface VideoLogger {
 	warn(bindings: object, message: string): void;
+}
+
+export async function cleanupFrames(
+	runDir: string,
+	logger?: VideoLogger,
+): Promise<void> {
+	try {
+		const files = await readdir(runDir);
+		await Promise.all(
+			files
+				.filter((file) => file.endsWith(".png"))
+				.map((file) => unlink(join(runDir, file))),
+		);
+	} catch {
+		logger?.warn({}, "recording frame cleanup failed");
+	}
 }
 
 function errorMessage(error: unknown): string {
@@ -51,7 +68,14 @@ export async function stitchVideo(
 	outPath: string,
 	execute: typeof execFileAsync = execFileAsync,
 	logger?: VideoLogger,
+	timeoutMs = DEFAULT_FFMPEG_TIMEOUT_MS,
 ): Promise<boolean> {
+	const controller = new AbortController();
+	let timedOut = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, timeoutMs);
 	try {
 		await execute(
 			"ffmpeg",
@@ -69,16 +93,14 @@ export async function stitchVideo(
 				"yuv420p",
 				resolve(outPath),
 			],
-			{ cwd: runDir },
-		);
-		const files = await readdir(runDir);
-		await Promise.all(
-			files
-				.filter((f) => f.endsWith(".png"))
-				.map((f) => unlink(join(runDir, f))),
+			{ cwd: runDir, signal: controller.signal },
 		);
 		return true;
 	} catch (error) {
+		if (timedOut) {
+			logger?.warn({}, "ffmpeg stitch timed out");
+			return false;
+		}
 		const message = errorMessage(error);
 		if (isFfmpegUnavailable(message)) {
 			logger?.warn(
@@ -89,5 +111,8 @@ export async function stitchVideo(
 			logger?.warn({ error: message }, "ffmpeg stitch failed");
 		}
 		return false;
+	} finally {
+		clearTimeout(timer);
+		await cleanupFrames(runDir, logger);
 	}
 }
